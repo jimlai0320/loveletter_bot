@@ -109,48 +109,53 @@ def hand_image(g, index):
     return im
 
 def board_image(g):
-    im, d = canvas(900, 1210, '情 書', 'LOVE LETTER  /  宮廷密函  /  六人版')
-    im.paste(ImageOps.fit(portrait(9), (170,106), centering=(0.5,0)), (694,24))
-    d.rectangle((694,24,864,130),outline=GOLD,width=1)
-    labels = {'lobby':'等待入席', 'playing':f'第 {g.round_no} 局', 'round_end':'本局揭曉', 'match_end':'最終加冕'}
-    text(d, (38,151), labels[g.stage], 32)
-    sub = f'{len(g.players)} / 6 位玩家' if g.stage == 'lobby' else f'牌庫 {len(g.deck):02d} 張  ·  目標 {g.goal} 枚好感'
-    text(d, (38,202), sub, 24, GOLD)
+    # Compact aspect ratio and large type keep the group thumbnail readable.
+    # Detailed action logs remain in the Telegram caption below the picture.
+    im = Image.new('RGB', (1000, 820), BG)
+    d = ImageDraw.Draw(im)
+    d.rectangle((12,12,987,807), outline=GOLD, width=3)
+    labels = {'lobby':'等待入席', 'playing':f'第 {g.round_no} 局',
+              'round_end':'本局揭曉', 'match_end':'最終加冕'}
+    text(d, (32,20), '情書', 52)
+    text(d, (170,35), labels[g.stage], 36, GOLD)
+    sub = (f'{len(g.players)} / 6 人已入席' if g.stage == 'lobby'
+           else f'牌庫 {len(g.deck)} 張  ·  目標 {g.goal} 好感')
+    text(d, (34,94), sub, 32)
+    im.paste(ImageOps.fit(portrait(9), (154,112), centering=(0.5,0)), (812,30))
+    d.rectangle((812,30,966,142),outline=GOLD,width=2)
     for i in range(6):
-        x, y = 34+(i%2)*426, 259+(i//2)*200
+        x, y = 32+(i%2)*476, 164+(i//2)*200
         active = g.stage == 'playing' and i == g.turn
-        d.rounded_rectangle((x,y,x+406,y+181), radius=18, fill=PANEL, outline=GOLD if active else '#61454b', width=3 if active else 1)
+        d.rounded_rectangle((x,y,x+460,y+188), radius=16, fill=PANEL,
+                            outline=GOLD if active else '#73545d', width=4 if active else 2)
         if i >= len(g.players):
-            text(d, (x+28,y+37), f'{i+1:02d}  等待入席', 28, MUTED)
+            text(d, (x+20,y+54), f'{i+1}  等待入席', 38, MUTED)
             continue
         p = g.players[i]
-        text(d, (x+20,y+15), fit_name(d, f'{i+1:02d}  {p.name}', 355), 28)
+        text(d, (x+18,y+7), fit_name(d, f'{i+1}  {p.name}', 421, 38), 38)
         state = '電腦' if p.ai else '玩家'
         if g.stage != 'lobby':
-            state = '已出局' if not p.alive else '保護中' if p.protected else '正在行動' if active else '等待中'
-        text(d, (x+20,y+61), f'{state}   /   好感 {p.score}', 22, GOLD)
-        if g.stage in ('round_end', 'match_end') and p.alive:
-            text(d, (x+20,y+99), '持牌：'+card(p.hand[0]), 23)
-        elif g.stage == 'lobby':
-            text(d, (x+20,y+107), '密函已備妥，靜候開局', 21, MUTED)
+            state = '已出局' if not p.alive else '保護中' if p.protected else '行動中' if active else '等待中'
+        text(d, (x+18,y+64), f'{state} · 好感 {p.score}', 30, GOLD)
+        revealed = (g.stage in ('round_end', 'match_end') and p.alive and p.hand)
+        v = p.hand[0] if revealed else p.discards[-1] if p.discards else None
+        if g.stage == 'lobby':
+            text(d, (x+18,y+117), '已入席，準備開局', 30, MUTED)
         else:
-            if p.discards:
-                v = p.discards[-1]
-                im.paste(ImageOps.fit(portrait(v),(63,88)),(x+325,y+79))
-                d.rectangle((x+324,y+78,x+389,y+168),outline=GOLD,width=1)
-                d.rectangle((x+325,y+140,x+388,y+167),fill=BG)
-                text(d,(x+348,y+137),v,21,GOLD)
-            for k, line in enumerate(wrap(d, '棄牌：'+(' · '.join(str(v) for v in p.discards) or '尚無'), 296, 22)[:2]):
-                text(d, (x+20,y+99+k*30), line, 22, MUTED)
-    text(d, (38,873), '宮廷紀事', 26, GOLD)
-    logs = g.log[-3:] or ['加入座位後，由房主開始遊戲。', '可加入電腦，補滿六人立即試玩。']
-    y = 921
-    for s in logs:
-        for line in wrap(d, s, 818, 23)[:2]:
-            text(d, (40,y), line, 23)
-            y += 33
-        y += 7
-    text(d, (38,1150), '群組選圖出牌  ·  只有本人看得到選牌內容', 21, MUTED)
+            if revealed:
+                detail = '持牌 '+card(p.hand[0])
+            else:
+                # Full discard history is available through the group button.
+                values = ' '.join(str(n) for n in p.discards[-5:])
+                detail = '棄牌 '+(('…' if len(p.discards)>5 else '')+values or '尚無')
+            for k, line in enumerate(wrap(d, detail, 304, 30)[:2]):
+                text(d, (x+18,y+109+k*34), line, 30, MUTED)
+            if v is not None:
+                im.paste(ImageOps.fit(portrait(v),(108,120)),(x+335,y+61))
+                d.rectangle((x+334,y+60,x+444,y+182),outline=GOLD,width=2)
+                d.rectangle((x+335,y+137,x+443,y+181),fill=BG)
+                d.text((x+389,y+132), str(v), font=font(38), fill=CREAM, anchor='mt')
+    text(d, (34,764), '金框：目前回合  ·  完整棄牌請按下方按鈕', 26, GOLD)
     return im
 
 def photo(im):
