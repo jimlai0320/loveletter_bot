@@ -125,7 +125,23 @@ async def show_board(app, g):
     else:
         caption = '\n'.join(g.log[-5:])
     im = await asyncio.to_thread(board_image,g)
-    g.board_id = await put_photo(app.bot,g.chat_id,g.board_id,im,caption[:1000],group_keys(g))
+    old_id = g.board_id
+    # Send first: a delivery failure must not remove the usable previous board.
+    msg = await app.bot.send_photo(
+        chat_id=g.chat_id, photo=photo(im), caption=caption[:1000],
+        reply_markup=group_keys(g), protect_content=True, disable_notification=True)
+    g.board_id = msg.message_id
+    STORE.save(g)
+    if old_id and old_id != g.board_id:
+        try:
+            await app.bot.delete_message(chat_id=g.chat_id,message_id=old_id)
+        except TelegramError:
+            # Older messages may be undeletable; retire their controls instead.
+            try:
+                await app.bot.edit_message_reply_markup(
+                    chat_id=g.chat_id,message_id=old_id,reply_markup=None)
+            except TelegramError:
+                log.warning('Previous board cleanup failed for chat %s.',g.chat_id)
 
 def arm(g):
     if g.stage == 'playing' and not g.deadline:
@@ -142,12 +158,7 @@ async def publish(app, g, full=True):
         await show_board(app,g)
     except TelegramError:
         log.warning('Public board delivery failed for chat %s; /status can recover.',g.chat_id)
-    if g.stage=='playing' and not g.deadline and not g.current.ai and g.notified_rev!=g.rev:
-        try:
-            await app.bot.send_message(g.chat_id,f'💌 輪到 {g.current.name}，請選牌。',reply_markup=Markup([[Button('選牌出牌',switch_inline_query_current_chat=f'{g.gid} {g.rev}')]]))
-            g.notified_rev=g.rev
-        except TelegramError:
-            log.warning('Turn notification delivery failed.')
+    # The fresh board contains the turn prompt and must remain the last game message.
     arm(g)
     STORE.save(g)
 
@@ -228,7 +239,6 @@ async def status(update,ctx):
         await update.effective_message.reply_text('此群組尚未開桌，請用 /newgame。')
         return
     async with LOCKS[g.chat_id]:
-        g.board_id = None
         await show_board(ctx.application,g)
         STORE.save(g)
 
@@ -316,7 +326,9 @@ async def callback(update,ctx):
                 if g.stage != 'match_end':
                     raise ValueError('此場尚未結束。')
                 title=g.room_title
+                old_board_id=g.board_id
                 g = Game(cid,g.owner,room_title=title)
+                g.board_id=old_board_id
                 existing=active_for(uid)
                 if existing and existing.chat_id!=cid:
                     raise ValueError('你已在其他牌桌。')
